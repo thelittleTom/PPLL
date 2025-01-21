@@ -2,7 +2,7 @@ import torch
 from torch import nn, Tensor
 from typing import Union, Tuple, List, Iterable, Dict
 import torch.nn.functional as F
-from ..SentenceTransformer import SentenceTransformer
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -111,7 +111,7 @@ def loss_fn(x, y,y_,l=None,if_neg=False,mode=0,mode_params=None):
 
 class BYOLoss(nn.Module):
     def __init__(self,
-                 model: SentenceTransformer,
+                 model ,
                  sentence_embedding_dimension: int,
                  moving_average_decay: float,if_neg:bool=False,mode=9):
         super(BYOLoss, self).__init__()

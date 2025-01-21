@@ -1,4 +1,4 @@
-
+from llm_utils import completion_with_backoff
 import random
 import torch
 import jsonlines
@@ -8,15 +8,12 @@ from sklearn.cluster import AgglomerativeClustering
 from dotmap import DotMap
 import numpy as np
 from sklearn.metrics import silhouette_score
-
-
-
+import re
 
 
 def write_jsonl(path, content):
     with jsonlines.open(path, "w") as json_file:
         json_file.write_all(content)
-
 
 
 def read_jsonl(path):
@@ -27,15 +24,6 @@ def read_jsonl(path):
     return content
 
 
-from llm_utils import completion_with_backoff
-
-
-
-
-
-
-
-
 def get_label(text, n_data):
     for d in n_data:
         if ''.join(d['text'].split()) == ''.join(text.split()):
@@ -44,24 +32,18 @@ def get_label(text, n_data):
     return None, None
 
 
-import re
-
 def extract_digits(s):
-    # 正则表达式匹配一个或多个数字，后跟一个连字符，再跟一个或多个数字
     pattern = r'^(\d+)-(\d+)$'
     match = re.match(pattern, s)
     if match:
-        # 如果匹配成功，返回两个数字
         return int(match.group(1)), int(match.group(2))
     else:
-        # 如果不匹配，返回None
         return None
 
 
-def llm_label_v4(config_pre, data,   model_embed, according='according to the intent',
+def llm_label_v4(config_pre, data, model_embed, according='according to the intent',
                  target_text='intent', prompt1=None, llm='gpt3', llm_model=None, entropy_num=25):
     model_embed.eval()
-
 
     def entropy(vals):
         vals = np.asarray(vals)
@@ -71,32 +53,27 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
     intent_set = set()
     for d in data:
         intent_set.add(d['label_text'])
- 
- 
+
     n_clusters = config_pre.n_classes
 
-    batch_size = 5
+    batch_size = 5000
     list_sen_embedding = []
 
-    # 将数据按batch_size分块
     for i in tqdm(range(0, len(data), batch_size)):
         batch = data[i:i + batch_size]
 
         sentences = [[instruction_, item['text']] for item in batch]
 
         sentence_vectors = model_embed.encode(sentences, convert_to_numpy=True, normalize_embeddings=True)
-        # 存储句子向量和原始数据
+
         list_sen_embedding.extend(sentence_vectors)
     from sklearn.cluster import KMeans
-    print(f'start cluster {n_clusters}')
+    ##print(f'start cluster {n_clusters}')
 
- 
- 
     kmeans = KMeans(n_clusters=n_clusters, random_state=config_pre.seed)
     kmeans.fit(list_sen_embedding)
     cluster_labels = kmeans.labels_
     centers = kmeans.cluster_centers_
- 
 
     for one, cl in zip(data, cluster_labels):
         one['predict'] = int(cl)
@@ -106,7 +83,7 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
             preds[d['predict']] = []
         preds[d['predict']].append(d)
     list_sen_embedding = np.array(list_sen_embedding)
- 
+
     entropies = []
     options = []
 
@@ -129,8 +106,6 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
 
     sort_metric = 'distance'
     data = sorted(data, key=lambda x: x[sort_metric])
-
- 
 
     labels_group_all = []
     if_sequence = False
@@ -181,16 +156,15 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
             else:
                 label_groups.append(p_cluster_texts)
         labels_group_all.append(label_groups)
- 
 
     label_ = [l for lll in labels_group_all for ll in lll for l in ll]
-    print('label_======', len(label_))
- 
+    ##print('label_======', len(label_))
+
     rst = []
     min_rsts = []
- 
-    for lab_idx, labels_groups in enumerate(labels_group_all):
- 
+
+    for lab_idx, labels_groups in tqdm(enumerate(labels_group_all)):
+
         for li, lab in enumerate(labels_groups):
 
             a = """|id|utterance|\n"""
@@ -200,8 +174,8 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
                 label_.append(f"|{i + 1}|{l}|")
                 a_dict[i + 1] = l
 
-            print(a + '\n'.join(label_))
-            print('merge--------------')
+            ##print(a + '\n'.join(label_))
+            ##print('merge--------------')
             if llm == 'gpt4o':
                 input_prompt = prompt1.format(data_table=a + '\n'.join(label_), n_exp=50, according=according,
                                               target_text=target_text)
@@ -219,9 +193,9 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
                                               target_text=target_text)
 
                 response = completion_with_backoff(input_prompt,
-                                                   llm='phi3', model=llm_model[0], tokenizer=llm_model[1])
+                                                   llm='llama3', model=llm_model[0], tokenizer=llm_model[1])
             # ,,llm='llm_35_stable'
-            print(response)
+            #print(response)
 
             try:
                 response = response.replace('```', '')
@@ -235,12 +209,12 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
             except:
                 continue
             min_rst = []
- 
+
             for r in response:
                 try:
                     cur_label = r.split('|')[2].strip()
                 except:
-                    print("出现错误在r.split('|')[2].strip()", r)
+                    #print("error happen in r.split('|')[2].strip()", r)
                     continue
                 extract_di = extract_digits(r.split('|')[1].strip())
                 if extract_di is not None:
@@ -261,18 +235,14 @@ def llm_label_v4(config_pre, data,   model_embed, according='according to the in
                                 'ground_label': (label_idx, label_name)})
                     min_rst.append({'text': a_dict[ridx], 'label_llm': cur_label, 'org_cluster': (lab_idx, li, ridx),
                                     'ground_label': (label_idx, label_name)})
-                    print(ridx, a_dict[ridx], (label_idx, label_name))
+                    #print(ridx, a_dict[ridx], (label_idx, label_name))
 
- 
- 
-
- 
             if len(min_rst) != len(lab):
-                print("not enough labels")
+                #print("not enough labels")
                 labels_groups.append(lab[:int(len(lab) / 2)])
                 labels_groups.append(lab[int(len(lab) / 2):])
                 continue
- 
+
             min_rsts.append(min_rst)
 
     return rst, min_rsts
@@ -293,24 +263,21 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
     batch_size = 5
     list_sen_embedding = []
 
-    # 将数据按batch_size分块
     for i in tqdm(range(0, len(data), batch_size)):
         batch = data[i:i + batch_size]
 
         sentences = [[instruction_, item['text']] for item in batch]
 
         sentence_vectors = model_embed.encode(sentences, convert_to_numpy=True, normalize_embeddings=True)
-        # 存储句子向量和原始数据
+
         list_sen_embedding.extend(sentence_vectors)
     from sklearn.cluster import KMeans
-    print(f'start cluster {n_clusters}')
+    #print(f'start cluster {n_clusters}')
 
     kmeans = KMeans(n_clusters=n_clusters, random_state=config_pre.seed)
     kmeans.fit(list_sen_embedding)
     cluster_labels = kmeans.labels_
     centers = kmeans.cluster_centers_
-
- 
 
     for one, cl in zip(data, cluster_labels):
         one['predict'] = int(cl)
@@ -324,8 +291,6 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
     for one, cl, embed in zip(data, cluster_labels, list_sen_embedding):
         one['predict'] = int(cl)
         one['embedding'] = embed
-
- 
 
     labels_group_all = []
     if_sequence = False
@@ -379,17 +344,15 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
                 label_groups.append(p_cluster_texts)
         labels_group_all.append(label_groups)
 
-
     label_ = [l for lll in labels_group_all for ll in lll for l in ll]
-    print('label_======', len(label_))
- 
- 
+    #print('label_======', len(label_))
+
     rst = []
-     
+
     min_rsts = []
- 
+
     for lab_idx, labels_groups in enumerate(labels_group_all):
- 
+
         for li, lab in enumerate(labels_groups):
 
             a = """|id|utterance|\n"""
@@ -399,8 +362,8 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
                 label_.append(f"|{i + 1}|{l}|")
                 a_dict[i + 1] = l
 
-            print(a + '\n'.join(label_))
-            print('merge--------------')
+            #print(a + '\n'.join(label_))
+            #print('merge--------------')
             if llm == 'gpt4':
                 input_prompt = prompt1.format(data_table=a + '\n'.join(label_), n_exp=50, according=according,
                                               target_text=target_text)
@@ -418,9 +381,9 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
                                               target_text=target_text)
 
                 response = completion_with_backoff(input_prompt,
-                                                   llm='phi3', model=llm_model[0], tokenizer=llm_model[1])
+                                                   llm='llama3', model=llm_model[0], tokenizer=llm_model[1])
             # ,,llm='llm_35_stable'
-            print(response)
+            #print(response)
 
             try:
                 response = response.replace('```', '')
@@ -439,7 +402,6 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
                 try:
                     cur_label = r.split('|')[2].strip()
                 except:
-                    print("出现错误在r.split('|')[2].strip()", r)
                     continue
                 extract_di = extract_digits(r.split('|')[1].strip())
                 if extract_di is not None:
@@ -460,35 +422,31 @@ def llm_label_v4_random(config_pre, data, model_embed, according='according to t
                                 'ground_label': (label_idx, label_name)})
                     min_rst.append({'text': a_dict[ridx], 'label_llm': cur_label, 'org_cluster': (lab_idx, li, ridx),
                                     'ground_label': (label_idx, label_name)})
-                    print(ridx, a_dict[ridx], (label_idx, label_name))
-
+                    #print(ridx, a_dict[ridx], (label_idx, label_name))
 
                 if len(new_texts) > tmp_group_main_dict['num']:
                     tmp_group_main_dict['num'] = len(new_texts)
                     tmp_group_main_dict['label'] = cur_label
-                 
- 
+
             if len(min_rst) != len(lab):
-                print("not enough labels")
+                #print("not enough labels")
                 labels_groups.append(lab[:int(len(lab) / 2)])
                 labels_groups.append(lab[int(len(lab) / 2):])
                 continue
-             
+
             min_rsts.append(min_rst)
- 
 
     return rst, min_rsts
 
 
-def llm_label_v4_random_all(config_pre, data,   model_embed, according='according to the intent',
+def llm_label_v4_random_all(config_pre, data, model_embed, according='according to the intent',
                             target_text='intent', prompt1=None, llm='gpt3', llm_model=None, entropy_num=25):
     random.shuffle(data)
 
     labels_group_all = [[[_['text'] for _ in data[i:i + config_pre.nc]] for i in range(0, len(data), config_pre.nc)]]
 
     label_ = [l for lll in labels_group_all for ll in lll for l in ll]
-    print('label_======', len(label_))
-
+    #print('label_======', len(label_))
 
     rst = []
 
@@ -505,8 +463,8 @@ def llm_label_v4_random_all(config_pre, data,   model_embed, according='accordin
                 label_.append(f"|{i + 1}|{l}|")
                 a_dict[i + 1] = l
 
-            print(a + '\n'.join(label_))
-            print('merge--------------')
+            #print(a + '\n'.join(label_))
+            #print('merge--------------')
             if llm == 'gpt4':
                 input_prompt = prompt1.format(data_table=a + '\n'.join(label_), n_exp=50, according=according,
                                               target_text=target_text)
@@ -524,9 +482,9 @@ def llm_label_v4_random_all(config_pre, data,   model_embed, according='accordin
                                               target_text=target_text)
 
                 response = completion_with_backoff(input_prompt,
-                                                   llm='phi3', model=llm_model[0], tokenizer=llm_model[1])
+                                                   llm='llama3', model=llm_model[0], tokenizer=llm_model[1])
             # ,,llm='llm_35_stable'
-            print(response)
+            #print(response)
 
             try:
                 response = response.replace('```', '')
@@ -545,7 +503,7 @@ def llm_label_v4_random_all(config_pre, data,   model_embed, according='accordin
                 try:
                     cur_label = r.split('|')[2].strip()
                 except:
-                    print("出现错误在r.split('|')[2].strip()", r)
+                    #print("r.split('|')[2].strip()", r)
                     continue
                 extract_di = extract_digits(r.split('|')[1].strip())
                 if extract_di is not None:
@@ -566,13 +524,11 @@ def llm_label_v4_random_all(config_pre, data,   model_embed, according='accordin
                                 'ground_label': (label_idx, label_name)})
                     min_rst.append({'text': a_dict[ridx], 'label_llm': cur_label, 'org_cluster': (lab_idx, li, ridx),
                                     'ground_label': (label_idx, label_name)})
-                    print(ridx, a_dict[ridx], (label_idx, label_name))
-
+                    #print(ridx, a_dict[ridx], (label_idx, label_name))
 
                 if len(new_texts) > tmp_group_main_dict['num']:
                     tmp_group_main_dict['num'] = len(new_texts)
                     tmp_group_main_dict['label'] = cur_label
-
 
                 # if flag:
                 #     for r_idx in r_idxs:
@@ -584,7 +540,7 @@ def llm_label_v4_random_all(config_pre, data,   model_embed, according='accordin
                 #                 else:
                 #                     main_cnt_no += 1
             if len(min_rst) != len(lab):
-                print("not enough labels")
+                #print("not enough labels")
                 labels_groups.append(lab[:int(len(lab) / 2)])
                 labels_groups.append(lab[int(len(lab) / 2):])
                 continue
@@ -594,7 +550,7 @@ def llm_label_v4_random_all(config_pre, data,   model_embed, according='accordin
     return rst, min_rsts
 
 
-def llm_label_v4_mini(config_pre, data,   model_embed,
+def llm_label_v4_mini(config_pre, data, model_embed,
                       according='according to the intent', target_text='intent', prompt1=None, mini_avg=4, llm='gpt3',
                       llm_model=None):
     model_embed.eval()
@@ -615,17 +571,16 @@ def llm_label_v4_mini(config_pre, data,   model_embed,
     batch_size = 10000
     list_sen_embedding = []
 
-    # 将数据按batch_size分块
     for i in tqdm(range(0, len(data), batch_size)):
         batch = data[i:i + batch_size]
 
         sentences = [[instruction_, item['text']] for item in batch]
 
         sentence_vectors = model_embed.encode(sentences, convert_to_numpy=True, normalize_embeddings=True)
-        # 存储句子向量和原始数据
+
         list_sen_embedding.extend(sentence_vectors)
     from sklearn.cluster import KMeans
-    print(f'start cluster {n_clusters}')
+    #print(f'start cluster {n_clusters}')
 
     kmeans = KMeans(n_clusters=int(len(data) / mini_avg), init='k-means++', )
     kmeans.fit(list_sen_embedding)
@@ -736,13 +691,10 @@ def llm_label_v4_mini(config_pre, data,   model_embed,
                 label_groups.append(p_cluster_texts)
         labels_group_all.append(label_groups)
         a = [l for ll in label_groups for l in ll]
-        if len(closes) != len(a):
-            print('Error: length not equal', len(closes), len(a))
+
 
     label_ = [l for lll in labels_group_all for ll in lll for l in ll]
-    print('label_======', len(label_))
-
-
+    #print('label_======', len(label_))
 
     rst = []
     min_rsts = []
@@ -758,8 +710,8 @@ def llm_label_v4_mini(config_pre, data,   model_embed,
                 label_.append(f"|{i + 1}|{l}|")
                 a_dict[i + 1] = l
 
-            print(a + '\n'.join(label_))
-            print('merge--------------')
+            #print(a + '\n'.join(label_))
+            #print('merge--------------')
             if llm == 'gpt4':
                 input_prompt = prompt1.format(data_table=a + '\n'.join(label_), n_exp=50, according=according,
                                               target_text=target_text)
@@ -777,9 +729,9 @@ def llm_label_v4_mini(config_pre, data,   model_embed,
                                               target_text=target_text)
 
                 response = completion_with_backoff(input_prompt,
-                                                   llm='phi3', model=llm_model[0], tokenizer=llm_model[1])
+                                                   llm='llama3', model=llm_model[0], tokenizer=llm_model[1])
             # ,,llm='llm_35_stable'
-            print(response)
+            #print(response)
 
             try:
                 response = response.replace('```', '')
@@ -799,7 +751,7 @@ def llm_label_v4_mini(config_pre, data,   model_embed,
                 try:
                     cur_label = r.split('|')[2].strip()
                 except:
-                    print("出现错误在r.split('|')[2].strip()", r)
+                    #print(" r.split('|')[2].strip()", r)
                     continue
                 extract_di = extract_digits(r.split('|')[1].strip())
                 if extract_di is not None:
@@ -827,31 +779,23 @@ def llm_label_v4_mini(config_pre, data,   model_embed,
                         #         {'text': neighbor['text'], 'label_llm': cur_label, 'org_cluster': (lab_idx, li, ridx),
                         #          'ground_label': (label_idx, label_name)})
 
-                        print(ridx, a_dict[ridx], (label_idx, label_name))
-
-
-
+                        #print(ridx, a_dict[ridx], (label_idx, label_name))
 
             if min_rst_org_len != len(lab):
-                print("not enough labels")
+                #print("not enough labels")
                 labels_groups.append(lab[:int(len(lab) / 2)])
                 labels_groups.append(lab[int(len(lab) / 2):])
                 continue
 
             min_rsts.append(min_rst)
 
-
     return rst, min_rsts
-
-
-
 
 
 if __name__ == '__main__':
 
     import os
     from argparse import ArgumentParser
-
 
     parser = ArgumentParser()
     parser.add_argument("--data_path", default='./datasets/clinc/small_p.json', type=str,
@@ -860,9 +804,12 @@ if __name__ == '__main__':
 
     parser.add_argument("--mode_gen", default='small', type=str,
                         help='the mode that used for generation positive pairs')
-    parser.add_argument('--save_llm_dir', default='./output/massive_intent', help='the path of saving the data generated by llm')
-    parser.add_argument('--use_llm',default='gpt3',type=str)
+    parser.add_argument('--save_llm_dir', default='./output/clinc',
+                        help='the path of saving the data generated by llm')
+    parser.add_argument('--use_llm', default='gpt3', type=str)
     args = parser.parse_args()
+
+    print(f'start LPPG on {args.data_path}')
     data_path = args.data_path
     if not os.path.exists(args.save_llm_dir):
         os.makedirs(args.save_llm_dir)
@@ -912,24 +859,23 @@ if __name__ == '__main__':
 
     mode_gen = args.mode_gen
     suffix = path_part[-2] + f'_{mode_gen}'
-    print(suffix)
-    config_pre = DotMap()
+    #print(suffix)
+    config_pre = args
     config_pre.all_data_v4 = True
-    config_pre['suffix'] = suffix
 
-    config_pre['nc'] = 20
+    config_pre.nc = 20
     config_pre.seed = 42
     config_pre.n_classes = true_label_num
 
-    print(config_pre)
+    #print(config_pre)
 
     according = 'according to the intent'
     target_text = 'intent'
 
     import pickle
 
-    print('seed', config_pre.seed)
-    print('use_llm', use_llm)
+    #print('seed', config_pre.seed)
+    #print('use_llm', use_llm)
     prompt0 = """\
     Instruction
     ##Context
@@ -963,7 +909,7 @@ if __name__ == '__main__':
     # Output
     """
 
-    print(according, target_text, prompt0)
+    #print(according, target_text, prompt0)
     if mode_gen == 'small':
 
         min_rsts_scatter, min_rsts = llm_label_v4(config_pre, n_data, model_embed,
@@ -1030,6 +976,7 @@ if __name__ == '__main__':
         with open(f"{args.save_llm_dir}/new2_{suffix}.pkl",
                   "wb") as file:
             pickle.dump(labels_all, file)
-    print(suffix)
-    print(config_pre)
-    print(according, target_text, prompt0)
+ 
+    
+    print(f'sucessfully generated positive pairs in {args.save_llm_dir}/min_rsts_{suffix}.pkl')
+    print(f'sucessfully generated mini-cluster labels in {args.save_llm_dir}/new2_{suffix}.pkl')

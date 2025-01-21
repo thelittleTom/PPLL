@@ -2,16 +2,26 @@ from InstructorEmbedding import INSTRUCTOR
 import torch
 from argparse import ArgumentParser
 import os
+import pickle
+import json
+from collections import Counter
+from sklearn.cluster import KMeans
+import numpy as np
+from scipy.optimize import linear_sum_assignment as linear_assignment
+from sklearn.metrics import normalized_mutual_info_score
+from sklearn.metrics import silhouette_score, silhouette_samples
+
+
 parser = ArgumentParser()
-parser.add_argument("--data_path", default='./datasets/massive_intent/small_p.json', type=str,
+parser.add_argument("--data_path", default='./datasets/clinc/small_p.json', type=str,
                     help="the path of the dataset")
-parser.add_argument("--save_dir", default='./output/massive_intent')
-parser.add_argument('--suffix', default='massive_intent_small', type=str)
-parser.add_argument('--positive_pairs', default='./output/massive_intent/min_rsts_massive_intent_small.pkl', type=str)
-parser.add_argument('--mini_cluster_labels', default='./output/massive_intent/new2_massive_intent_small.pkl', type=str)
+parser.add_argument("--save_dir", default='./output/clinc')
+parser.add_argument('--suffix', default='clinc_small', type=str)
+parser.add_argument('--positive_pairs', default='./output/clinc/min_rsts_clinc_small.pkl', type=str)
+parser.add_argument('--mini_cluster_labels', default='./output/clinc/new2_clinc_small.pkl', type=str)
 
 parser.add_argument("--model_name", default='/root/autodl-tmp/LLM-Research/instructor_large', type=str)
-parser.add_argument("--model_pth",default='./output/massive_intent/checkpoints/0.0001/0_186.pth',type=str)
+parser.add_argument("--model_pth",default='./output/clinc/checkpoints/0.0001/0_154.pth',type=str)
 parser.add_argument("--eval_add_labels", default=False, type=bool)
 args = parser.parse_args()
 data_path = args.data_path
@@ -22,9 +32,7 @@ model_embed = INSTRUCTOR(args.model_name).cuda()
 state_dict = torch.load(args.model_pth)
 model_embed.load_state_dict(state_dict)
 
-import pickle
 
-import json
 def read_jsonl(path):
     import jsonlines
     content = []
@@ -57,7 +65,7 @@ if args.eval_add_labels:
     #     pickle.dump(new_labels2, file)
     with open(args.mini_cluster_labels,
               "rb") as file:
-        # 使用 pickle.load() 恢复嵌套列表
+
         labels_v4 = pickle.load(file)
 
     fake_n_data = []
@@ -65,7 +73,6 @@ if args.eval_add_labels:
         fake_n_data.append({'text': l})
     data = data + fake_n_data
 with open( args.positive_pairs, "rb") as file:
-    # 使用 pickle.load() 恢复嵌套列表
     min_rsts = pickle.load(file)
 
 min_rsts_scatter = [mr for mrr in min_rsts for mr in mrr]
@@ -74,14 +81,14 @@ for m in min_rsts_scatter:
 test = [[instruction_, item['text']] for item in data]
 batch_size = 2000
 list_sen_embedding = []
-# 将数据按batch_size分块
+
 for i in  range(0, len(data), batch_size) :
     batch = data[i:i + batch_size]
 
     sentences = [[instruction_, item['text']] for item in batch]
 
     sentence_vectors = model_embed.encode(sentences, convert_to_numpy=True, normalize_embeddings=True)
-    # 存储句子向量和原始数据
+
     list_sen_embedding.extend(sentence_vectors)
 
 list_data_embedding = list_sen_embedding
@@ -90,25 +97,10 @@ label2text_set = {}
 for d in data:
     if d['label'] not in label2text_set:
         label2text_set[d['label']] = d['label_text']
-all_acc = []
-all_NMI = []
-all_score = []
-all_sss = []
-all_ss = []
-all_mo = []
-from collections import Counter
-from sklearn.cluster import KMeans
-import numpy as np
-from scipy.optimize import linear_sum_assignment as linear_assignment
-from sklearn.metrics import normalized_mutual_info_score
-from sklearn.metrics import silhouette_score, silhouette_samples
+
+
 def calculate_acc(y_true, y_pred,texts=None):
-    """
-    计算聚类的准确性 (ACC)
-    y_true: 真实标签，形状为 (n_samples,)
-    y_pred: 聚类标签，形状为 (n_samples,)
-    返回值：聚类准确性 (ACC)
-    """
+
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
     if texts is not None:
@@ -127,11 +119,6 @@ def calculate_acc(y_true, y_pred,texts=None):
     mapping_dict={}
     for i1, i2 in zip(idx1, idx2):
         mapping[i1] = i2
-        if texts is not None:
-            print(f"{texts_pred[i1]}-----> {texts_true[i2]}")
-
-
-
     mapped_arr = np.array([mapping.get(x, x) for x in y_pred])
 
     return total_sum / y_pred.size, mapped_arr
@@ -153,13 +140,11 @@ for seed in [42]:
         preds[d['predict']]['data'].append(d)
         preds[d['predict']]['llm'].append(text2data[d['text']]['llm'])
     for k, v in preds.items():
-        print('pred', k, label2text_set[k])
+        #print('pred', k, label2text_set[k])
         list_llm = [__ for _ in preds[k]['llm'] for __ in _]
         count_dict = Counter(list_llm)
 
-        # 打印每个元素及其数量
-        for item, count in count_dict.most_common(10):
-            print(f"{item}: {count}")
+
 prompt1 = """\
 Instruction
 ##Context
@@ -184,7 +169,6 @@ for k, v in preds.items():
     list_llm = [__ for _ in preds[k]['llm'] for __ in _]
     count_dict = Counter(list_llm)
 
-    # 打印每个元素及其数量
 
     a = """|category description|number|\n"""
     label_ = []
@@ -192,7 +176,7 @@ for k, v in preds.items():
     for item, count in count_dict.most_common(3):  # enumerate(preds_nopred[pren]):
         label_.append(f"|{item}|{count}|")
 
-    print(a + '\n'.join(label_))
+    #print(a + '\n'.join(label_))
     input_prompt = prompt1.format(data_table=a + '\n'.join(label_), n_exp=250, according=according,
                                   )
 
@@ -201,7 +185,7 @@ for k, v in preds.items():
 
     try:
         response = response.split('<summary>')[-1].split('</summary>')[0].strip()
-        print(label2text_set[k], '--->summary:', response)
+        #print(label2text_set[k], '--->summary:', response)
         preds[k]['pred_summary'] = response
         preds[k]['pred_label_text'] = label2text_set[k]
         llm_labels.append(response)
@@ -209,8 +193,7 @@ for k, v in preds.items():
         continue
 
 
-# 将列表的每个元素写入到txt文件，每个元素占一行
 with open(args.save_dir+'/new_labels.txt', 'w') as file:
     for item in llm_labels:
         file.write(item + '\n')
-
+print(f'successfully write new labels to file {args.save_dir}/new_labels.txt')

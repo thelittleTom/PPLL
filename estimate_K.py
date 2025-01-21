@@ -58,7 +58,7 @@ list_llm = [_['label_llm'] for _ in min_rsts_scatter]
 count_dict = Counter(list_llm)
 
 new_list_llm = []
-# # 打印每个元素及其数量  _intent-org_0_laoyebaohao_l4
+
 for item, count in count_dict.most_common():
     print(f"{item}: {count}")
     new_list_llm.append(item)
@@ -79,7 +79,7 @@ instruction_ = instruction_prompt[path_part[-2]]
 batch_size = 2000
 list_sen_embedding = []
 
-# 将数据按batch_size分块
+
 cur_use_data = list_llm
 
 for i in tqdm(range(0, len(cur_use_data), batch_size)):
@@ -89,7 +89,7 @@ for i in tqdm(range(0, len(cur_use_data), batch_size)):
     except:
         sentences = [[instruction_, item] for item in batch]
     sentence_vectors = model_embed.encode(sentences, convert_to_numpy=True, normalize_embeddings=True)
-    # 存储句子向量和原始数据
+
     list_sen_embedding.extend(sentence_vectors)
 
 list_data_embedding = list_sen_embedding
@@ -102,11 +102,11 @@ for seed in [100, 13, 21, 36, 42]:
 
     # kmeans = KMeans(n_clusters=77, max_iter=10000, random_state=42, init=init_c,, init='k-means++', )
     kmeans.fit(list_data_embedding)
-    # 获取聚类结果
+
     cluster_labels = kmeans.labels_
     count_label = Counter(cluster_labels)
     all_llm_labels = []
-    # 打印每个元素及其数量
+
     belta = len(cur_use_data) / K_
     for item, count in count_label.most_common():
         print(f"{item}: {count}")
