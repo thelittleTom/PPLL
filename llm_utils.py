@@ -14,10 +14,10 @@ from langchain_openai import AzureChatOpenAI
 
 
 llm_35_stable=   AzureChatOpenAI(
-            deployment_name="gpt35-zhibo",
-            api_key="3b962d3f14854d66856e22e1ba4f9c62",
-            api_version="2023-10-01-preview",
-            azure_endpoint="https://chatgpt-4-yiwise-ca.openai.azure.com/",
+            deployment_name="gpt35",
+            api_key="",
+            api_version="",
+            azure_endpoint="",
             temperature=0.00000001,
         )
 
